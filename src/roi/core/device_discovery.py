@@ -434,7 +434,7 @@ def autodetect_and_patch_config(*, log_fn: Optional[LogFn] = None) -> DiscoveryR
                     if verbose:
                         _log(log_fn, f"[autodetect] canview: {cand2}")
 
-    # Arduino relay controller (K1 serial backend)
+    # USB relay controller (K1 serial backend; Arduino/DSD Tech style)
     if bool(getattr(config, "AUTO_DETECT_K1_SERIAL", True)) and bool(getattr(config, "K1_ENABLE", True)):
         cur = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
         if cur:

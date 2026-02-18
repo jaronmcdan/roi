@@ -292,17 +292,30 @@ class DeviceCommandProcessor:
     def handle(self, arb: int, data: bytes) -> None:
         """Handle one control frame."""
 
-        # Relay control (K1 direct drive)
+        # Relay control (K1..K4 direct drive)
         if arb == int(config.RLY_CTRL_ID):
             if len(data) < 1:
                 return
 
-            # CAN bit0 (K1)
-            k1_is_1 = (data[0] & 0x01) == 0x01
+            b0 = int(data[0]) & 0xFF
+            # PAT DBC uses 2-bit relay fields: K1=bits0..1, K2=2..3, K3=4..5, K4=6..7.
+            fields = [((b0 >> (2 * i)) & 0x03) for i in range(4)]
 
-            # Direct drive only (no DUT inference). Optional invert via K1_CAN_INVERT.
-            drive = (not k1_is_1) if bool(getattr(config, "K1_CAN_INVERT", False)) else k1_is_1
-            self.hardware.set_k1_drive(bool(drive))
+            for ch, fld in enumerate(fields, start=1):
+                drive = bool(fld != 0)
+                # Keep legacy invert semantics on K1 only.
+                if ch == 1 and bool(getattr(config, "K1_CAN_INVERT", False)):
+                    drive = not drive
+
+                try:
+                    if hasattr(self.hardware, "set_k_drive"):
+                        self.hardware.set_k_drive(ch, bool(drive))
+                    elif ch == 1:
+                        self.hardware.set_k1_drive(bool(drive))
+                except Exception:
+                    # Keep control path resilient: a bad channel write must not
+                    # prevent other relay channels from updating.
+                    pass
             return
 
         # AFG Control (Primary)

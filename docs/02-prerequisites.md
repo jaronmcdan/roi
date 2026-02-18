@@ -28,7 +28,7 @@ Typical deployment:
   - B&K Precision bench multimeter (USB serial)
   - Electronic load (VISA USBTMC)
   - AFG/function generator (VISA USB or VISA serial)
-  - Arduino-style USB relay controller for K1
+  - USB relay controller for K1 (Arduino-style or DSD Tech SH-URxx)
   - MrSignal/LANYI MR2.x Modbus PSU
 
 ## OS Packages (Recommended)

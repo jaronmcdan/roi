@@ -70,13 +70,20 @@ If using ASRL resources, tune auto-detect probing with:
 - `AUTO_DETECT_VISA_ASRL_ALLOW_PREFIXES`
 - `AUTO_DETECT_VISA_ASRL_EXCLUDE_PREFIXES`
 
-## K1 Relay (USB serial controller)
+## K Relays (USB serial controller, K1..K4)
 
 ```bash
 K1_BACKEND=serial
-K1_SERIAL_PORT=/dev/serial/by-id/<your-arduino>
+K1_SERIAL_PORT=/dev/serial/by-id/<your-relay>
+K1_CHANNEL_COUNT=1
 K1_SERIAL_BAUD=9600
 K1_SERIAL_RELAY_INDEX=1
+
+# DSD Tech SH-URxx
+# K1_BACKEND=dsdtech
+# K1_CHANNEL_COUNT=4
+# K1_DSDTECH_CMD_TEMPLATE=AT+CH{index}={state}
+# K1_DSDTECH_CMD_SUFFIX=\r\n
 ```
 
 ## MrSignal / LANYI MR2.x Modbus PSU

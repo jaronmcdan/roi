@@ -578,17 +578,35 @@ _INDEX_HTML = r"""<!doctype html>
       card.appendChild(tbl);
     }, data);
 
-    makeCard('K1 Relay', 'k1', '', function (card, devices, healthAll, data) {
+    makeCard('K Relays', 'k1', '', function (card, devices, healthAll, data) {
       var wd = data.watchdog || {};
       var k1 = devices.k1 || {};
+      var kr = devices.k_relays || {};
+      var chans = Array.isArray(kr.channels) ? kr.channels : (Array.isArray(k1.channels) ? k1.channels : []);
       var tbl = document.createElement('table');
       addRow(tbl, 'WD', wdSpan(wd, 'k1'));
-      addRow(tbl, 'Backend', k1.backend || '--');
-      addRow(tbl, 'Drive', badge(!!k1.drive, 'ON', 'OFF'));
-      if (k1.pin_level === null || k1.pin_level === undefined) {
-        addRow(tbl, 'Level', '--');
+      addRow(tbl, 'Backend', kr.backend || k1.backend || '--');
+      addRow(tbl, 'Channels', Number(kr.channel_count || k1.channel_count || (chans.length || 1)));
+
+      if (chans.length > 0) {
+        for (var i = 0; i < chans.length; i++) {
+          var ch = chans[i] || {};
+          var idx = Number(ch.index);
+          if (!isFinite(idx) || idx <= 0) idx = (i + 1);
+          var name = String(ch.name || ('K' + String(idx)));
+
+          var wrap = document.createElement('span');
+          wrap.appendChild(badge(!!ch.drive, 'ON', 'OFF'));
+          wrap.appendChild(document.createTextNode('  '));
+          if (ch.pin_level === null || ch.pin_level === undefined) {
+            wrap.appendChild(document.createTextNode('--'));
+          } else {
+            wrap.appendChild(badge(!!ch.pin_level, 'HIGH', 'LOW'));
+          }
+          addRow(tbl, name, wrap);
+        }
       } else {
-        addRow(tbl, 'Level', badge(!!k1.pin_level, 'HIGH', 'LOW'));
+        addRow(tbl, 'K1', badge(!!k1.drive, 'ON', 'OFF'));
       }
       card.appendChild(tbl);
     }, data);

@@ -1177,20 +1177,40 @@ def main() -> int:
                 except Exception:
                     pass
 
-                # K1 state
-                k1_drive = None
-                k1_level = None
+                # K relay state (K1..K4)
+                relay_backend = str(getattr(hardware, "relay_backend", ""))
+                relay_states: list[Dict[str, Any]] = []
                 try:
-                    k1_drive = bool(hardware.get_k1_drive())
+                    kmap = hardware.get_k_relays_state()
+                    for ch in sorted(int(k) for k in kmap.keys()):
+                        st = kmap.get(ch, {}) or {}
+                        relay_states.append(
+                            {
+                                "name": f"K{ch}",
+                                "index": int(ch),
+                                "drive": bool(st.get("drive", False)),
+                                "pin_level": st.get("pin_level", None),
+                            }
+                        )
                 except Exception:
-                    try:
-                        k1_drive = bool(getattr(hardware.relay, "is_lit", False))
-                    except Exception:
-                        k1_drive = None
-                try:
-                    k1_level = hardware.get_k1_pin_level()
-                except Exception:
+                    # Backward-compatible fallback: synthesize K1 from legacy API.
+                    k1_drive = None
                     k1_level = None
+                    try:
+                        k1_drive = bool(hardware.get_k1_drive())
+                    except Exception:
+                        try:
+                            k1_drive = bool(getattr(hardware.relay, "is_lit", False))
+                        except Exception:
+                            k1_drive = None
+                    try:
+                        k1_level = hardware.get_k1_pin_level()
+                    except Exception:
+                        k1_level = None
+                    relay_states = [{"name": "K1", "index": 1, "drive": k1_drive, "pin_level": k1_level}]
+
+                k1_drive = relay_states[0].get("drive", None) if relay_states else None
+                k1_level = relay_states[0].get("pin_level", None) if relay_states else None
 
                 # Device summaries
                 devices: Dict[str, Any] = {}
@@ -1207,9 +1227,18 @@ def main() -> int:
 
                 devices["k1"] = {
                     "present": True,
-                    "backend": str(getattr(hardware, "relay_backend", "")),
+                    "backend": relay_backend,
                     "drive": k1_drive,
                     "pin_level": k1_level,
+                    "channel_count": len(relay_states),
+                    "channels": relay_states,
+                }
+
+                devices["k_relays"] = {
+                    "present": True,
+                    "backend": relay_backend,
+                    "channel_count": len(relay_states),
+                    "channels": relay_states,
                 }
 
                 devices["mmeter"] = {
@@ -1327,24 +1356,36 @@ def main() -> int:
                     wd = watchdog.snapshot()
                     snap = telemetry.snapshot()
         
-                    k1_drive = False
+                    relay_summary = "K1=OFF"
                     try:
-                        k1_drive = bool(hardware.get_k1_drive())
+                        kmap = hardware.get_k_relays_state()
+                        parts: list[str] = []
+                        for ch in sorted(int(k) for k in kmap.keys()):
+                            st = kmap.get(ch, {}) or {}
+                            drive = bool(st.get("drive", False))
+                            level = st.get("pin_level", None)
+                            level_s = "--" if level is None else ("H" if bool(level) else "L")
+                            parts.append(f"K{ch}={'ON' if drive else 'OFF'}(L={level_s})")
+                        if parts:
+                            relay_summary = " ".join(parts)
                     except Exception:
-                        k1_drive = bool(getattr(hardware.relay, "is_lit", False))
-        
-                    try:
-                        k1_level = hardware.get_k1_pin_level()
-                    except Exception:
-                        k1_level = None
-        
-                    level_str = "--" if k1_level is None else ("H" if bool(k1_level) else "L")
+                        k1_drive = False
+                        try:
+                            k1_drive = bool(hardware.get_k1_drive())
+                        except Exception:
+                            k1_drive = bool(getattr(hardware.relay, "is_lit", False))
+                        try:
+                            k1_level = hardware.get_k1_pin_level()
+                        except Exception:
+                            k1_level = None
+                        level_s = "--" if k1_level is None else ("H" if bool(k1_level) else "L")
+                        relay_summary = f"K1={'ON' if k1_drive else 'OFF'}(L={level_s})"
         
                     load_pct, rx_fps, tx_fps = busload.snapshot() if busload else (None, None, None)
                     bus_str = '--' if load_pct is None else f"{load_pct:.1f}%"
 
                     _log(
-                        f"K1={'ON' if k1_drive else 'OFF'} Level={level_str} Bus={bus_str} "
+                        f"{relay_summary} Bus={bus_str} "
                         f"Load={int(snap.get('load_volts_mV', 0))/1000:.3f}V {int(snap.get('load_current_mA', 0))/1000:.3f}A "
                         f"Meter={int(snap.get('meter_current_mA', 0))/1000:.3f}A "
                         f"WD={wd.get('timed_out')}"

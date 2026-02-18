@@ -156,6 +156,7 @@ BO_ 2365523200 CTRL_RLY: 8 CTRL
  SG_ RLY_K1 : 0|2@1+ (1,0) [0|0] "" Vector__XXX
  SG_ RLY_K2 : 2|2@1+ (1,0) [0|0] "" Vector__XXX
  SG_ RLY_K3 : 4|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ RLY_K4 : 6|2@1+ (1,0) [0|0] "" Vector__XXX
 
 BO_ 2365523456 CTRL_METER: 8 CTRL
  SG_ METER_MODE : 0|8@1+ (1,0) [0|0] "" Vector__XXX

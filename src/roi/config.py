@@ -186,7 +186,7 @@ AUTO_DETECT_ELOAD_IDN_HINTS = _env_str(
 # These are matched against the /dev/serial/by-id symlink names.
 AUTO_DETECT_MMETER_BYID_HINTS = _env_str("AUTO_DETECT_MMETER_BYID_HINTS", AUTO_DETECT_MMETER_IDN_HINTS)
 AUTO_DETECT_MRSIGNAL_BYID_HINTS = _env_str("AUTO_DETECT_MRSIGNAL_BYID_HINTS", "mr.signal,lanyi,mr2,mrsignal")
-AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "arduino,micro,relay")
+AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "dsd,dsdtech,arduino,micro,relay")
 AUTO_DETECT_CANVIEW_BYID_HINTS = _env_str("AUTO_DETECT_CANVIEW_BYID_HINTS", "canview,rm_canview,proemion")
 AUTO_DETECT_AFG_BYID_HINTS = _env_str("AUTO_DETECT_AFG_BYID_HINTS", "afg")
 
@@ -244,9 +244,14 @@ K1_ENABLE = _env_bool("K1_ENABLE", True)
 # Values:
 #   - "auto" (default): Prefer the standard USB-serial relay backend when configured.
 #   - "serial":  Force USB-serial relay backend (e.g. Arduino + relay board).
+#   - "dsdtech": Force DSD Tech AT-command serial backend.
 #   - "mock":    Always use a mock relay (no hardware).
 #   - "disabled": Disable K1 entirely (same as K1_ENABLE=0).
 K1_BACKEND = _env_str("K1_BACKEND", "auto").strip().lower()
+
+# Number of logical relay channels controlled from CTRL_RLY.
+# 1 keeps legacy behavior (single-channel relay mapped to K1).
+K1_CHANNEL_COUNT = _env_int("K1_CHANNEL_COUNT", 1)
 
 # USB-serial relay backend (Arduino relay controller).
 # Use a stable by-id path when possible, e.g.:
@@ -261,6 +266,18 @@ K1_SERIAL_BOOT_DELAY_SEC = _env_float("K1_SERIAL_BOOT_DELAY_SEC", 2.0)
 # default protocol: ON = '1'..'4', OFF = 'a'..'d'.
 K1_SERIAL_ON_CHAR = _env_str("K1_SERIAL_ON_CHAR", "")
 K1_SERIAL_OFF_CHAR = _env_str("K1_SERIAL_OFF_CHAR", "")
+
+# DSD Tech SH-URxx serial backend (AT-command style).
+K1_DSDTECH_BAUD = _env_int("K1_DSDTECH_BAUD", K1_SERIAL_BAUD)
+K1_DSDTECH_BOOT_DELAY_SEC = _env_float("K1_DSDTECH_BOOT_DELAY_SEC", 0.2)
+# Starting physical channel index for logical K1 (1-based).
+K1_DSDTECH_CHANNEL = _env_int("K1_DSDTECH_CHANNEL", 1)
+# Format vars:
+#   {index} -> physical relay index
+#   {state} -> 1 (on) / 0 (off)
+K1_DSDTECH_CMD_TEMPLATE = _env_str("K1_DSDTECH_CMD_TEMPLATE", "AT+CH{index}={state}")
+# Command suffix. Supports escaped sequences (e.g. "\r\n").
+K1_DSDTECH_CMD_SUFFIX = _env_str("K1_DSDTECH_CMD_SUFFIX", r"\r\n")
 
 # If True, invert the incoming CAN bit0 before driving K1.
 K1_CAN_INVERT = _env_bool("K1_CAN_INVERT", False)

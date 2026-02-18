@@ -404,30 +404,36 @@ def build_dashboard(hardware, *,
         mrs_table.add_row("Status", "[red]NOT DETECTED[/]")
 
     # --------------------
-    # K1 relay panel
+    # K relay panel
     # --------------------
-    try:
-        drive_on = bool(hardware.get_k1_drive())
-    except Exception:
-        drive_on = bool(getattr(hardware.relay, "is_lit", False))
-
-    try:
-        pin_level = hardware.get_k1_pin_level()
-    except Exception:
-        pin_level = None
-
     backend = str(getattr(hardware, "relay_backend", "") or "").strip() or "unknown"
+    relay_states = []
+    try:
+        kmap = hardware.get_k_relays_state()
+        for ch in sorted(int(k) for k in kmap.keys()):
+            st = kmap.get(ch, {}) or {}
+            relay_states.append((int(ch), bool(st.get("drive", False)), st.get("pin_level", None)))
+    except Exception:
+        try:
+            drive_on = bool(hardware.get_k1_drive())
+        except Exception:
+            drive_on = bool(getattr(hardware.relay, "is_lit", False))
+
+        try:
+            pin_level = hardware.get_k1_pin_level()
+        except Exception:
+            pin_level = None
+        relay_states = [(1, drive_on, pin_level)]
 
     k1_table = Table.grid(padding=(0, 1))
     k1_table.add_column(justify="right", style="bold yellow", no_wrap=True)
     k1_table.add_column()
     k1_table.add_row("WD", _wd_cell(watchdog, "k1"))
     k1_table.add_row("Backend", f"[dim]{backend}[/]")
-    k1_table.add_row("Drive", _badge(drive_on, "ON", "OFF"))
-    if pin_level is None:
-        k1_table.add_row("Level", "[dim]--[/]")
-    else:
-        k1_table.add_row("Level", _badge(bool(pin_level), "HIGH", "LOW"))
+    k1_table.add_row("Channels", f"[white]{len(relay_states)}[/]")
+    for ch, drive_on, pin_level in relay_states:
+        level_txt = "[dim]--[/]" if pin_level is None else _badge(bool(pin_level), "HIGH", "LOW")
+        k1_table.add_row(f"K{int(ch)}", f"{_badge(bool(drive_on), 'ON', 'OFF')}  {level_txt}")
 
     # --------------------
     # CAN panel
@@ -458,7 +464,7 @@ def build_dashboard(hardware, *,
     layout["afg"].update(Panel(afg_table, title="[bold]AFG-2125[/]", border_style="green", box=box.ROUNDED))
     layout["mmeter"].update(Panel(meter_table, title="[bold]Multimeter[/]", border_style="magenta", box=box.ROUNDED))
     layout["mrsignal"].update(Panel(mrs_table, title="[bold]MrSignal[/]", border_style="white", box=box.ROUNDED))
-    layout["k1"].update(Panel(k1_table, title="[bold]K1 Relay[/]", border_style="yellow", box=box.ROUNDED))
+    layout["k1"].update(Panel(k1_table, title="[bold]K Relays[/]", border_style="yellow", box=box.ROUNDED))
     layout["can"].update(Panel(can_table, title="[bold]CAN[/]", border_style="blue", box=box.ROUNDED))
 
     # --------------------

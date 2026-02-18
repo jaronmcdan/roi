@@ -100,10 +100,18 @@ class FakeHardware:
 
         # outputs
         self.k1_drive: bool | None = None
+        self.k_drives: dict[int, bool] = {}
         self.mrs_calls: list[tuple] = []
 
     def set_k1_drive(self, v: bool) -> None:
         self.k1_drive = bool(v)
+        self.k_drives[1] = bool(v)
+
+    def set_k_drive(self, channel: int, v: bool) -> None:
+        ch = int(channel)
+        self.k_drives[ch] = bool(v)
+        if ch == 1:
+            self.k1_drive = bool(v)
 
     def set_mrsignal(self, *, enable: bool, output_select: int, value: float, max_v: float, max_ma: float):
         self.mrs_calls.append((enable, output_select, value, max_v, max_ma))
@@ -400,6 +408,47 @@ def test_handle_relay_and_invert(monkeypatch):
     p.handle(int(config.RLY_CTRL_ID), b"\x01")
     # inverted => False
     assert hw.k1_drive is False
+    assert hw.k_drives.get(1) is False
+    # K2..K4 are decoded too (all zero in this payload).
+    assert hw.k_drives.get(2) is False
+    assert hw.k_drives.get(3) is False
+    assert hw.k_drives.get(4) is False
+
+
+def test_handle_relay_multichannel_decodes_k1_to_k4(monkeypatch):
+    import roi.config as config
+    from roi.core.device_comm import DeviceCommandProcessor
+
+    hw = FakeHardware()
+    p = DeviceCommandProcessor(hw, log_fn=lambda s: None)
+
+    monkeypatch.setattr(config, "K1_CAN_INVERT", False, raising=False)
+    # K1=1, K2=3, K3=0, K4=1  (2-bit fields)
+    p.handle(int(config.RLY_CTRL_ID), b"\x4d")
+
+    assert hw.k_drives.get(1) is True
+    assert hw.k_drives.get(2) is True
+    assert hw.k_drives.get(3) is False
+    assert hw.k_drives.get(4) is True
+
+
+def test_handle_relay_legacy_set_k1_only(monkeypatch):
+    import roi.config as config
+    from roi.core.device_comm import DeviceCommandProcessor
+
+    class LegacyHardware:
+        def __init__(self):
+            self.k1_drive = None
+
+        def set_k1_drive(self, v: bool) -> None:
+            self.k1_drive = bool(v)
+
+    hw = LegacyHardware()
+    p = DeviceCommandProcessor(hw, log_fn=lambda s: None)
+
+    monkeypatch.setattr(config, "K1_CAN_INVERT", False, raising=False)
+    p.handle(int(config.RLY_CTRL_ID), b"\x01")
+    assert hw.k1_drive is True
 
 
 def test_handle_afg_primary_and_ext(monkeypatch):

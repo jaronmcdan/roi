@@ -7,7 +7,7 @@ import glob
 import math
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import pyvisa
 import serial
@@ -27,18 +27,49 @@ class _NullRelay:
     have the K1 relay controller attached.
     """
 
-    def __init__(self, initial_drive: bool = False):
-        self._is_lit = bool(initial_drive)
+    def __init__(self, initial_drive: bool = False, *, channels: int = 1):
+        try:
+            n = int(channels)
+        except Exception:
+            n = 1
+        self._channels = max(1, min(4, n))
+        self._states = [False] * self._channels
+        self._states[0] = bool(initial_drive)
 
     @property
     def is_lit(self) -> bool:
-        return bool(self._is_lit)
+        return self.get_channel(1)
+
+    @property
+    def channels(self) -> int:
+        return int(self._channels)
 
     def on(self) -> None:
-        self._is_lit = True
+        self.set_channel(1, True)
 
     def off(self) -> None:
-        self._is_lit = False
+        self.set_channel(1, False)
+
+    def set_channel(self, channel: int, drive_on: bool) -> None:
+        try:
+            idx = int(channel) - 1
+        except Exception:
+            return
+        if idx < 0 or idx >= self._channels:
+            return
+        self._states[idx] = bool(drive_on)
+
+    def get_channel(self, channel: int) -> bool:
+        try:
+            idx = int(channel) - 1
+        except Exception:
+            return False
+        if idx < 0 or idx >= self._channels:
+            return False
+        return bool(self._states[idx])
+
+    def get_pin_level(self, channel: int = 1):
+        return None
 
     @property
     def pin(self):
@@ -48,11 +79,10 @@ class _NullRelay:
 class _SerialRelay:
     """Relay backend that toggles a channel via a USB-serial ASCII protocol.
 
-    Designed for simple Arduino-based relay controllers that accept a single
-    byte command to turn a relay channel ON/OFF.
+    A command builder translates logical channel + state into bytes to write.
 
-    Interface is intentionally LED-like (on/off/is_lit/pin) so the rest of the
-    app can treat K1 as a simple "drive output" regardless of implementation.
+    Interface remains LED-like for channel 1 (on/off/is_lit/pin) while also
+    exposing set_channel/get_channel for K1..K4.
     """
 
     def __init__(
@@ -60,17 +90,22 @@ class _SerialRelay:
         port: str,
         *,
         baud: int = 9600,
-        cmd_on: bytes,
-        cmd_off: bytes,
+        command_for: Callable[[int, bool], bytes],
+        channels: int = 1,
         initial_drive: bool = False,
         boot_delay_s: float = 2.0,
         timeout_s: float = 0.5,
     ):
         self._port = str(port)
         self._baud = int(baud)
-        self._cmd_on = bytes(cmd_on)
-        self._cmd_off = bytes(cmd_off)
-        self._is_lit = bool(initial_drive)
+        self._command_for = command_for
+        try:
+            n = int(channels)
+        except Exception:
+            n = 1
+        self._channels = max(1, min(4, n))
+        self._states = [False] * self._channels
+        self._states[0] = bool(initial_drive)
         self._lock = threading.Lock()
 
         self.ser = serial.Serial(
@@ -92,7 +127,7 @@ class _SerialRelay:
             pass
 
         # Apply the initial drive state so the software and hardware match.
-        self._apply(self._is_lit)
+        self._apply(1, self._states[0], force=True)
 
     def _write(self, payload: bytes) -> None:
         if not payload:
@@ -104,23 +139,51 @@ class _SerialRelay:
             except Exception:
                 pass
 
-    def _apply(self, drive_on: bool) -> None:
+    def _apply(self, channel: int, drive_on: bool, *, force: bool = False) -> None:
         try:
-            self._write(self._cmd_on if drive_on else self._cmd_off)
-            self._is_lit = bool(drive_on)
+            idx = int(channel)
+        except Exception:
+            return
+        if idx < 1 or idx > self._channels:
+            return
+        if (not force) and (self._states[idx - 1] == bool(drive_on)):
+            return
+        try:
+            payload = self._command_for(int(idx), bool(drive_on))
+            self._write(payload)
+            self._states[idx - 1] = bool(drive_on)
         except Exception as e:
             # Keep running; device may be unplugged. Caller will see the log.
-            print(f"WARNING: K1 serial relay write failed ({self._port}): {e}")
+            print(f"WARNING: K relay serial write failed ({self._port}, K{idx}): {e}")
 
     @property
     def is_lit(self) -> bool:
-        return bool(self._is_lit)
+        return self.get_channel(1)
+
+    @property
+    def channels(self) -> int:
+        return int(self._channels)
 
     def on(self) -> None:
-        self._apply(True)
+        self.set_channel(1, True)
 
     def off(self) -> None:
-        self._apply(False)
+        self.set_channel(1, False)
+
+    def set_channel(self, channel: int, drive_on: bool) -> None:
+        self._apply(channel, drive_on)
+
+    def get_channel(self, channel: int) -> bool:
+        try:
+            idx = int(channel) - 1
+        except Exception:
+            return False
+        if idx < 0 or idx >= self._channels:
+            return False
+        return bool(self._states[idx])
+
+    def get_pin_level(self, channel: int = 1):
+        return None
 
     @property
     def pin(self):
@@ -221,12 +284,17 @@ class HardwareManager:
         # K1 is treated as a direct drive output. We intentionally do not infer "DUT power"
         # from contact wiring (NC/NO). If you need true DUT power status, measure it.
         initial_drive = bool(getattr(config, "K1_IDLE_DRIVE", False))
+        try:
+            relay_channels_cfg = int(getattr(config, "K1_CHANNEL_COUNT", 1) or 1)
+        except Exception:
+            relay_channels_cfg = 1
+        self.relay_channel_count = max(1, min(4, relay_channels_cfg))
 
         self.relay_backend: str = "disabled"
 
         # Respect the legacy enable switch first.
         if not bool(getattr(config, "K1_ENABLE", True)):
-            self.relay = _NullRelay(initial_drive)
+            self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
             self.relay_backend = "disabled"
         else:
             backend = str(getattr(config, "K1_BACKEND", "auto") or "auto").strip().lower()
@@ -237,59 +305,123 @@ class HardwareManager:
                 if not port:
                     return False
 
-                idx = int(getattr(config, "K1_SERIAL_RELAY_INDEX", 1) or 1)
-                idx = max(1, min(8, idx))
+                start_idx = int(getattr(config, "K1_SERIAL_RELAY_INDEX", 1) or 1)
+                start_idx = max(1, min(8, start_idx))
+                channels = int(self.relay_channel_count)
 
                 on_char = str(getattr(config, "K1_SERIAL_ON_CHAR", "") or "").strip()
                 off_char = str(getattr(config, "K1_SERIAL_OFF_CHAR", "") or "").strip()
-                if not on_char:
-                    # Default protocol: ON = '1'.., OFF = 'a'.. (index 1 -> '1'/'a')
-                    on_char = str(idx)
-                if not off_char:
-                    off_char = chr(ord('a') + idx - 1)
+                if channels > 1 and (on_char or off_char):
+                    print("WARNING: K1_SERIAL_ON_CHAR/OFF_CHAR only apply when K1_CHANNEL_COUNT=1; ignoring overrides.")
+                    on_char = ""
+                    off_char = ""
 
                 baud = int(getattr(config, "K1_SERIAL_BAUD", 9600) or 9600)
                 boot_delay = float(getattr(config, "K1_SERIAL_BOOT_DELAY_SEC", 2.0) or 0.0)
+
+                def _cmd_for(channel: int, drive_on: bool) -> bytes:
+                    idx = start_idx + int(channel) - 1
+                    idx = max(1, min(8, idx))
+
+                    if channels == 1 and (on_char or off_char):
+                        on_s = on_char or str(idx)
+                        off_s = off_char or chr(ord("a") + idx - 1)
+                        token = on_s if drive_on else off_s
+                    else:
+                        token = str(idx) if drive_on else chr(ord("a") + idx - 1)
+
+                    return str(token).encode("ascii", errors="ignore")
 
                 try:
                     self.relay = _SerialRelay(
                         port,
                         baud=baud,
-                        cmd_on=on_char.encode("ascii", errors="ignore"),
-                        cmd_off=off_char.encode("ascii", errors="ignore"),
+                        command_for=_cmd_for,
+                        channels=channels,
                         initial_drive=bool(initial_drive),
                         boot_delay_s=boot_delay,
                     )
                     self.relay_backend = "serial"
-                    print(f"K1 relay: serial backend on {port} (relay {idx}, on='{on_char}', off='{off_char}')")
+                    print(f"K relay: serial backend on {port} (K1->{start_idx}, channels={channels})")
                     return True
                 except Exception as e:
                     print(f"WARNING: K1 serial relay unavailable ({port}); running with a mock relay. ({e})")
                     return False
 
+            def _try_dsdtech() -> bool:
+                port = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
+                if not port:
+                    return False
+
+                channels = int(self.relay_channel_count)
+                base_idx = int(getattr(config, "K1_DSDTECH_CHANNEL", 1) or 1)
+                max_base = max(1, 4 - channels + 1)
+                base_idx = max(1, min(max_base, base_idx))
+                baud = int(getattr(config, "K1_DSDTECH_BAUD", getattr(config, "K1_SERIAL_BAUD", 9600)) or 9600)
+                boot_delay = float(getattr(config, "K1_DSDTECH_BOOT_DELAY_SEC", 0.2) or 0.0)
+                template = str(getattr(config, "K1_DSDTECH_CMD_TEMPLATE", "AT+CH{index}={state}") or "AT+CH{index}={state}")
+                suffix_raw = str(getattr(config, "K1_DSDTECH_CMD_SUFFIX", r"\r\n") or "")
+                try:
+                    suffix = bytes(suffix_raw, "utf-8").decode("unicode_escape")
+                except Exception:
+                    suffix = suffix_raw
+
+                def _cmd_for(channel: int, drive_on: bool) -> bytes:
+                    idx = base_idx + int(channel) - 1
+                    idx = max(1, min(4, idx))
+                    state = 1 if bool(drive_on) else 0
+                    try:
+                        cmd = template.format(index=idx, state=state)
+                    except Exception:
+                        cmd = f"AT+CH{idx}={state}"
+                    return (str(cmd) + str(suffix)).encode("ascii", errors="ignore")
+
+                try:
+                    self.relay = _SerialRelay(
+                        port,
+                        baud=baud,
+                        command_for=_cmd_for,
+                        channels=channels,
+                        initial_drive=bool(initial_drive),
+                        boot_delay_s=boot_delay,
+                    )
+                    self.relay_backend = "dsdtech"
+                    print(
+                        f"K relay: dsdtech backend on {port} "
+                        f"(K1->{base_idx}, channels={channels}, template='{template}')"
+                    )
+                    return True
+                except Exception as e:
+                    print(f"WARNING: K1 dsdtech relay unavailable ({port}); running with a mock relay. ({e})")
+                    return False
+
             # Backend selection
             if backend == "disabled":
-                self.relay = _NullRelay(initial_drive)
+                self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                 self.relay_backend = "disabled"
             elif backend == "mock":
-                self.relay = _NullRelay(initial_drive)
+                self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                 self.relay_backend = "mock"
             elif backend == "serial":
                 if not _try_serial():
-                    self.relay = _NullRelay(initial_drive)
+                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
+                    self.relay_backend = "mock"
+            elif backend == "dsdtech":
+                if not _try_dsdtech():
+                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             elif backend == "gpio":
                 # GPIO relay-hat support was removed. Treat this as a request for
                 # the standard K1 serial interface.
                 print("WARNING: K1_BACKEND='gpio' is no longer supported; using serial instead.")
                 if not _try_serial():
-                    self.relay = _NullRelay(initial_drive)
+                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             else:
                 # auto: prefer the standard K1 serial relay interface everywhere.
                 if not _try_serial():
                     print("WARNING: K1 serial relay not configured; set K1_SERIAL_PORT (or disable K1). Using mock relay.")
-                    self.relay = _NullRelay(initial_drive)
+                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
 
 
@@ -355,34 +487,113 @@ class HardwareManager:
         print(f"MMETER SCPI style: {self.mmeter_scpi_style} (auto default)")
 
     # --- Relay helpers ---
-    def get_k1_drive(self) -> bool:
-        "Return the logical drive state we are commanding for K1 (ON/OFF)."
-        return bool(self.relay.is_lit)
-
-    def get_k1_pin_level(self):
-        "Return the raw pin level (True=HIGH, False=LOW) if available."
+    def get_k_channel_count(self) -> int:
         try:
-            pin = getattr(self.relay, 'pin', None)
+            n = int(getattr(self.relay, "channels", getattr(self, "relay_channel_count", 1)) or 1)
+        except Exception:
+            n = int(getattr(self, "relay_channel_count", 1) or 1)
+        return max(1, min(4, n))
+
+    def get_k_drive(self, channel: int = 1) -> bool:
+        "Return the logical drive state for K<channel>."
+        try:
+            ch = int(channel)
+        except Exception:
+            return False
+        try:
+            if hasattr(self.relay, "get_channel"):
+                return bool(self.relay.get_channel(ch))
+        except Exception:
+            pass
+        if ch == 1:
+            return bool(getattr(self.relay, "is_lit", False))
+        return False
+
+    def get_k_pin_level(self, channel: int = 1):
+        "Return the raw pin level for K<channel> when available."
+        try:
+            ch = int(channel)
+        except Exception:
+            return None
+        try:
+            if hasattr(self.relay, "get_pin_level"):
+                lvl = self.relay.get_pin_level(ch)
+                return None if lvl is None else bool(lvl)
+        except Exception:
+            pass
+
+        # Legacy single-pin path (channel 1 only).
+        if ch != 1:
+            return None
+        try:
+            pin = getattr(self.relay, "pin", None)
             if pin is None:
                 return None
-            if hasattr(pin, 'state'):
+            if hasattr(pin, "state"):
                 return bool(pin.state)
-            if hasattr(pin, 'value'):
+            if hasattr(pin, "value"):
                 return bool(pin.value)
         except Exception:
             return None
         return None
 
+    def set_k_drive(self, channel: int, drive_on: bool) -> None:
+        "Set K<channel> drive directly (no DUT inference)."
+        try:
+            ch = int(channel)
+        except Exception:
+            return
+        if ch < 1 or ch > self.get_k_channel_count():
+            return
+
+        if hasattr(self.relay, "set_channel"):
+            self.relay.set_channel(ch, bool(drive_on))
+            return
+
+        # Legacy single-channel interface
+        if ch == 1:
+            if bool(drive_on):
+                self.relay.on()
+            else:
+                self.relay.off()
+
+    def set_k_idle_all(self) -> None:
+        "Apply idle drive state to all configured K relay channels."
+        idle = bool(getattr(config, "K1_IDLE_DRIVE", False))
+        for ch in range(1, self.get_k_channel_count() + 1):
+            self.set_k_drive(ch, idle)
+
+    def get_k_relays_state(self) -> dict[int, dict[str, object]]:
+        "Return per-channel relay state for dashboards/diagnostics."
+        out: dict[int, dict[str, object]] = {}
+        for ch in range(1, self.get_k_channel_count() + 1):
+            try:
+                drive = bool(self.get_k_drive(ch))
+            except Exception:
+                drive = False
+            try:
+                pin_level = self.get_k_pin_level(ch)
+            except Exception:
+                pin_level = None
+            out[ch] = {"drive": drive, "pin_level": pin_level}
+        return out
+
+    # Backward-compatible K1 wrappers
+    def get_k1_drive(self) -> bool:
+        "Return the logical drive state we are commanding for K1 (ON/OFF)."
+        return bool(self.get_k_drive(1))
+
+    def get_k1_pin_level(self):
+        "Return the raw pin level (True=HIGH, False=LOW) if available."
+        return self.get_k_pin_level(1)
+
     def set_k1_drive(self, drive_on: bool) -> None:
         "Set K1 drive directly (no DUT inference)."
-        if drive_on:
-            self.relay.on()
-        else:
-            self.relay.off()
+        self.set_k_drive(1, bool(drive_on))
 
     def set_k1_idle(self) -> None:
-        "Apply K1 idle drive state."
-        self.set_k1_drive(bool(getattr(config, 'K1_IDLE_DRIVE', False)))
+        "Apply idle drive state to all configured K relay channels."
+        self.set_k_idle_all()
 
 
 
