@@ -242,7 +242,8 @@ K1_ENABLE = _env_bool("K1_ENABLE", True)
 # K1 backend selection.
 #
 # Values:
-#   - "auto" (default): Prefer the standard USB-serial relay backend when configured.
+#   - "auto" (default): For K1_CHANNEL_COUNT=1, try "serial" then "dsdtech".
+#                       For K1_CHANNEL_COUNT>1, try "dsdtech" then "serial".
 #   - "serial":  Force USB-serial relay backend (e.g. Arduino + relay board).
 #   - "dsdtech": Force DSD Tech AT-command serial backend.
 #   - "mock":    Always use a mock relay (no hardware).
@@ -439,6 +440,7 @@ MRSIGNAL_POLL_PERIOD = _env_float("MRSIGNAL_POLL_PERIOD", STATUS_POLL_PERIOD)
 
 # --- CAN IDs (Control) ---
 LOAD_CTRL_ID = 0x0CFF0400
+# Relay control (CTRL_RLY in PAT.dbc). Keep this aligned with sender DBC.
 RLY_CTRL_ID = 0x0CFF0500
 MMETER_CTRL_ID = 0x0CFF0600
 MMETER_CTRL_EXT_ID = 0x0CFF0601  # Extended multimeter control (op-code based)

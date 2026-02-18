@@ -98,11 +98,19 @@ MULTI_METER_PATH=/dev/ttyUSB0
 MRSIGNAL_PORT=/dev/ttyUSB1
 K1_SERIAL_PORT=/dev/ttyACM0
 K1_CHANNEL_COUNT=1
+# K1_BACKEND=auto
 # K1_BACKEND=serial
 # K1_BACKEND=dsdtech
 ELOAD_VISA_ID=USB0::...
 AFG_VISA_ID=USB0::...
 ```
+
+Relay backend `auto` behavior:
+
+- `K1_CHANNEL_COUNT=1`: tries `serial`, then `dsdtech`
+- `K1_CHANNEL_COUNT>1`: tries `dsdtech`, then `serial`
+
+Relay CAN control ID stays fixed at `0x0CFF0500` (`CTRL_RLY` in `PAT.dbc`).
 
 ## Runtime and Safety Settings
 

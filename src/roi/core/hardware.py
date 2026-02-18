@@ -198,6 +198,19 @@ def _clamp_i16(x: int) -> int:
     return x
 
 
+def _relay_auto_backend_order(channel_count: int) -> tuple[str, str]:
+    """Return preferred backend order for K1_BACKEND=auto."""
+
+    try:
+        n = int(channel_count)
+    except Exception:
+        n = 1
+    # Multi-channel relay controllers are commonly DSD Tech AT-command devices.
+    if n > 1:
+        return ("dsdtech", "serial")
+    return ("serial", "dsdtech")
+
+
 class HardwareManager:
     """Manages communication and state for the e-load, multimeter, AFG, and relay."""
 
@@ -418,9 +431,23 @@ class HardwareManager:
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             else:
-                # auto: prefer the standard K1 serial relay interface everywhere.
-                if not _try_serial():
-                    print("WARNING: K1 serial relay not configured; set K1_SERIAL_PORT (or disable K1). Using mock relay.")
+                # auto: choose a sensible default order and fall back to the
+                # other supported serial protocol.
+                order = _relay_auto_backend_order(self.relay_channel_count)
+                ok = False
+                for candidate in order:
+                    if candidate == "serial":
+                        ok = _try_serial()
+                    elif candidate == "dsdtech":
+                        ok = _try_dsdtech()
+                    if ok:
+                        break
+                if not ok:
+                    tried = ",".join(order)
+                    print(
+                        f"WARNING: K1 relay auto backend failed (tried {tried}); "
+                        "set K1_BACKEND/K1_SERIAL_PORT (or disable K1). Using mock relay."
+                    )
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
 
