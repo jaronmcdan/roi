@@ -970,7 +970,11 @@ def main() -> int:
         except Exception as e:
             _log(f"[autodetect] warning: {e}")
 
-    hardware = HardwareManager()
+    try:
+        hardware = HardwareManager()
+    except Exception as e:
+        _log(f"Hardware init failed: {e}")
+        return 2
     stop_event = threading.Event()
     watchdog = ControlWatchdog()
 

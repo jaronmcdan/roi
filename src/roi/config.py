@@ -280,6 +280,10 @@ K1_DSDTECH_CMD_TEMPLATE = _env_str("K1_DSDTECH_CMD_TEMPLATE", "AT+CH{index}={sta
 # Command suffix. Supports escaped sequences (e.g. "\r\n").
 K1_DSDTECH_CMD_SUFFIX = _env_str("K1_DSDTECH_CMD_SUFFIX", r"\r\n")
 
+# Relay startup retries (helps absorb transient USB/CP210 bring-up races).
+K1_INIT_RETRIES = _env_int("K1_INIT_RETRIES", 3)
+K1_INIT_RETRY_DELAY_SEC = _env_float("K1_INIT_RETRY_DELAY_SEC", 0.25)
+
 # If True, invert the incoming CAN bit0 before driving K1.
 K1_CAN_INVERT = _env_bool("K1_CAN_INVERT", False)
 

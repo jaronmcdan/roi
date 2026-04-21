@@ -311,11 +311,23 @@ class HardwareManager:
             self.relay_backend = "disabled"
         else:
             backend = str(getattr(config, "K1_BACKEND", "auto") or "auto").strip().lower()
+            try:
+                relay_init_retries = int(getattr(config, "K1_INIT_RETRIES", 3) or 3)
+            except Exception:
+                relay_init_retries = 3
+            relay_init_retries = max(1, relay_init_retries)
+            try:
+                relay_init_retry_delay = float(getattr(config, "K1_INIT_RETRY_DELAY_SEC", 0.25) or 0.0)
+            except Exception:
+                relay_init_retry_delay = 0.25
+            relay_init_retry_delay = max(0.0, relay_init_retry_delay)
 
             # Helper: construct the serial relay (Arduino controller)
-            def _try_serial() -> bool:
+            def _try_serial(*, fatal_on_fail: bool = False) -> bool:
                 port = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
                 if not port:
+                    if fatal_on_fail:
+                        raise RuntimeError("K1 serial relay requested but K1_SERIAL_PORT is empty.")
                     return False
 
                 start_idx = int(getattr(config, "K1_SERIAL_RELAY_INDEX", 1) or 1)
@@ -345,25 +357,43 @@ class HardwareManager:
 
                     return str(token).encode("ascii", errors="ignore")
 
-                try:
-                    self.relay = _SerialRelay(
-                        port,
-                        baud=baud,
-                        command_for=_cmd_for,
-                        channels=channels,
-                        initial_drive=bool(initial_drive),
-                        boot_delay_s=boot_delay,
-                    )
-                    self.relay_backend = "serial"
-                    print(f"K relay: serial backend on {port} (K1->{start_idx}, channels={channels})")
-                    return True
-                except Exception as e:
-                    print(f"WARNING: K1 serial relay unavailable ({port}); running with a mock relay. ({e})")
-                    return False
+                last_error = None
+                for attempt in range(1, relay_init_retries + 1):
+                    try:
+                        self.relay = _SerialRelay(
+                            port,
+                            baud=baud,
+                            command_for=_cmd_for,
+                            channels=channels,
+                            initial_drive=bool(initial_drive),
+                            boot_delay_s=boot_delay,
+                        )
+                        self.relay_backend = "serial"
+                        print(f"K relay: serial backend on {port} (K1->{start_idx}, channels={channels})")
+                        return True
+                    except Exception as e:
+                        last_error = e
+                        if attempt < relay_init_retries:
+                            print(
+                                f"WARNING: K1 serial relay init failed ({port}); "
+                                f"retry {attempt}/{relay_init_retries} in {relay_init_retry_delay:.3f}s. ({e})"
+                            )
+                            if relay_init_retry_delay > 0:
+                                time.sleep(relay_init_retry_delay)
 
-            def _try_dsdtech() -> bool:
+                if fatal_on_fail:
+                    raise RuntimeError(
+                        f"K1 serial relay unavailable ({port}) after {relay_init_retries} attempt(s): {last_error}"
+                    )
+
+                print(f"WARNING: K1 serial relay unavailable ({port}); running with a mock relay. ({last_error})")
+                return False
+
+            def _try_dsdtech(*, fatal_on_fail: bool = False) -> bool:
                 port = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
                 if not port:
+                    if fatal_on_fail:
+                        raise RuntimeError("K1 dsdtech relay requested but K1_SERIAL_PORT is empty.")
                     return False
 
                 channels = int(self.relay_channel_count)
@@ -389,24 +419,40 @@ class HardwareManager:
                         cmd = f"AT+CH{idx}={state}"
                     return (str(cmd) + str(suffix)).encode("ascii", errors="ignore")
 
-                try:
-                    self.relay = _SerialRelay(
-                        port,
-                        baud=baud,
-                        command_for=_cmd_for,
-                        channels=channels,
-                        initial_drive=bool(initial_drive),
-                        boot_delay_s=boot_delay,
+                last_error = None
+                for attempt in range(1, relay_init_retries + 1):
+                    try:
+                        self.relay = _SerialRelay(
+                            port,
+                            baud=baud,
+                            command_for=_cmd_for,
+                            channels=channels,
+                            initial_drive=bool(initial_drive),
+                            boot_delay_s=boot_delay,
+                        )
+                        self.relay_backend = "dsdtech"
+                        print(
+                            f"K relay: dsdtech backend on {port} "
+                            f"(K1->{base_idx}, channels={channels}, template='{template}')"
+                        )
+                        return True
+                    except Exception as e:
+                        last_error = e
+                        if attempt < relay_init_retries:
+                            print(
+                                f"WARNING: K1 dsdtech relay init failed ({port}); "
+                                f"retry {attempt}/{relay_init_retries} in {relay_init_retry_delay:.3f}s. ({e})"
+                            )
+                            if relay_init_retry_delay > 0:
+                                time.sleep(relay_init_retry_delay)
+
+                if fatal_on_fail:
+                    raise RuntimeError(
+                        f"K1 dsdtech relay unavailable ({port}) after {relay_init_retries} attempt(s): {last_error}"
                     )
-                    self.relay_backend = "dsdtech"
-                    print(
-                        f"K relay: dsdtech backend on {port} "
-                        f"(K1->{base_idx}, channels={channels}, template='{template}')"
-                    )
-                    return True
-                except Exception as e:
-                    print(f"WARNING: K1 dsdtech relay unavailable ({port}); running with a mock relay. ({e})")
-                    return False
+
+                print(f"WARNING: K1 dsdtech relay unavailable ({port}); running with a mock relay. ({last_error})")
+                return False
 
             # Backend selection
             if backend == "disabled":
@@ -416,18 +462,18 @@ class HardwareManager:
                 self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                 self.relay_backend = "mock"
             elif backend == "serial":
-                if not _try_serial():
+                if not _try_serial(fatal_on_fail=True):
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             elif backend == "dsdtech":
-                if not _try_dsdtech():
+                if not _try_dsdtech(fatal_on_fail=True):
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             elif backend == "gpio":
                 # GPIO relay-hat support was removed. Treat this as a request for
                 # the standard K1 serial interface.
                 print("WARNING: K1_BACKEND='gpio' is no longer supported; using serial instead.")
-                if not _try_serial():
+                if not _try_serial(fatal_on_fail=True):
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
             else:
@@ -437,9 +483,9 @@ class HardwareManager:
                 ok = False
                 for candidate in order:
                     if candidate == "serial":
-                        ok = _try_serial()
+                        ok = _try_serial(fatal_on_fail=False)
                     elif candidate == "dsdtech":
-                        ok = _try_dsdtech()
+                        ok = _try_dsdtech(fatal_on_fail=False)
                     if ok:
                         break
                 if not ok:
