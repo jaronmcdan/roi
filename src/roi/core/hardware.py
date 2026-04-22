@@ -98,6 +98,9 @@ class _SerialRelay:
     ):
         self._port = str(port)
         self._baud = int(baud)
+        self._timeout_s = max(0.05, float(timeout_s))
+        self._boot_delay_s = max(0.0, float(boot_delay_s))
+        self._reconnect_delay_s = 0.15
         self._command_for = command_for
         try:
             n = int(channels)
@@ -108,36 +111,67 @@ class _SerialRelay:
         self._states[0] = bool(initial_drive)
         self._lock = threading.Lock()
 
+        self.ser = None
+        self._open_serial(apply_boot_delay=True)
+
+        # Apply the initial drive state so the software and hardware match.
+        self._apply(1, self._states[0], force=True)
+
+    def _open_serial(self, *, apply_boot_delay: bool) -> None:
         self.ser = serial.Serial(
             self._port,
             self._baud,
-            timeout=float(timeout_s),
-            write_timeout=float(timeout_s),
+            timeout=float(self._timeout_s),
+            write_timeout=float(self._timeout_s),
         )
-
-        # Many Arduino-class boards either reset on open or need a moment to
-        # finish USB enumeration / setup(). Keep it configurable.
-        if boot_delay_s and boot_delay_s > 0:
-            time.sleep(float(boot_delay_s))
-
+        # Some USB relay controllers need a short settle window after open.
+        if apply_boot_delay and self._boot_delay_s > 0:
+            time.sleep(self._boot_delay_s)
         try:
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
         except Exception:
             pass
 
-        # Apply the initial drive state so the software and hardware match.
-        self._apply(1, self._states[0], force=True)
+    def _reopen_locked(self) -> bool:
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+
+        last_error = None
+        for attempt in range(1, 3):
+            try:
+                self._open_serial(apply_boot_delay=False)
+                print(f"INFO: K relay serial link recovered ({self._port})")
+                return True
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(self._reconnect_delay_s)
+
+        print(f"WARNING: K relay serial reconnect failed ({self._port}): {last_error}")
+        return False
 
     def _write(self, payload: bytes) -> None:
         if not payload:
             return
         with self._lock:
-            self.ser.write(payload)
-            try:
-                self.ser.flush()
-            except Exception:
-                pass
+            last_error = None
+            for attempt in range(1, 3):
+                try:
+                    self.ser.write(payload)
+                    self.ser.flush()
+                    return
+                except Exception as e:
+                    last_error = e
+                    if attempt < 2 and self._reopen_locked():
+                        continue
+                    raise
+            # Should never be reached, but keeps static analyzers happy.
+            if last_error is not None:
+                raise last_error
 
     def _apply(self, channel: int, drive_on: bool, *, force: bool = False) -> None:
         try:
@@ -196,19 +230,6 @@ def _clamp_i16(x: int) -> int:
     if x > 32767:
         return 32767
     return x
-
-
-def _relay_auto_backend_order(channel_count: int) -> tuple[str, str]:
-    """Return preferred backend order for K1_BACKEND=auto."""
-
-    try:
-        n = int(channel_count)
-    except Exception:
-        n = 1
-    # Multi-channel relay controllers are commonly DSD Tech AT-command devices.
-    if n > 1:
-        return ("dsdtech", "serial")
-    return ("serial", "dsdtech")
 
 
 class HardwareManager:
@@ -310,7 +331,7 @@ class HardwareManager:
             self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
             self.relay_backend = "disabled"
         else:
-            backend = str(getattr(config, "K1_BACKEND", "auto") or "auto").strip().lower()
+            backend = str(getattr(config, "K1_BACKEND", "dsdtech") or "dsdtech").strip().lower()
             try:
                 relay_init_retries = int(getattr(config, "K1_INIT_RETRIES", 3) or 3)
             except Exception:
@@ -321,73 +342,6 @@ class HardwareManager:
             except Exception:
                 relay_init_retry_delay = 0.25
             relay_init_retry_delay = max(0.0, relay_init_retry_delay)
-
-            # Helper: construct the serial relay (Arduino controller)
-            def _try_serial(*, fatal_on_fail: bool = False) -> bool:
-                port = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
-                if not port:
-                    if fatal_on_fail:
-                        raise RuntimeError("K1 serial relay requested but K1_SERIAL_PORT is empty.")
-                    return False
-
-                start_idx = int(getattr(config, "K1_SERIAL_RELAY_INDEX", 1) or 1)
-                start_idx = max(1, min(8, start_idx))
-                channels = int(self.relay_channel_count)
-
-                on_char = str(getattr(config, "K1_SERIAL_ON_CHAR", "") or "").strip()
-                off_char = str(getattr(config, "K1_SERIAL_OFF_CHAR", "") or "").strip()
-                if channels > 1 and (on_char or off_char):
-                    print("WARNING: K1_SERIAL_ON_CHAR/OFF_CHAR only apply when K1_CHANNEL_COUNT=1; ignoring overrides.")
-                    on_char = ""
-                    off_char = ""
-
-                baud = int(getattr(config, "K1_SERIAL_BAUD", 9600) or 9600)
-                boot_delay = float(getattr(config, "K1_SERIAL_BOOT_DELAY_SEC", 2.0) or 0.0)
-
-                def _cmd_for(channel: int, drive_on: bool) -> bytes:
-                    idx = start_idx + int(channel) - 1
-                    idx = max(1, min(8, idx))
-
-                    if channels == 1 and (on_char or off_char):
-                        on_s = on_char or str(idx)
-                        off_s = off_char or chr(ord("a") + idx - 1)
-                        token = on_s if drive_on else off_s
-                    else:
-                        token = str(idx) if drive_on else chr(ord("a") + idx - 1)
-
-                    return str(token).encode("ascii", errors="ignore")
-
-                last_error = None
-                for attempt in range(1, relay_init_retries + 1):
-                    try:
-                        self.relay = _SerialRelay(
-                            port,
-                            baud=baud,
-                            command_for=_cmd_for,
-                            channels=channels,
-                            initial_drive=bool(initial_drive),
-                            boot_delay_s=boot_delay,
-                        )
-                        self.relay_backend = "serial"
-                        print(f"K relay: serial backend on {port} (K1->{start_idx}, channels={channels})")
-                        return True
-                    except Exception as e:
-                        last_error = e
-                        if attempt < relay_init_retries:
-                            print(
-                                f"WARNING: K1 serial relay init failed ({port}); "
-                                f"retry {attempt}/{relay_init_retries} in {relay_init_retry_delay:.3f}s. ({e})"
-                            )
-                            if relay_init_retry_delay > 0:
-                                time.sleep(relay_init_retry_delay)
-
-                if fatal_on_fail:
-                    raise RuntimeError(
-                        f"K1 serial relay unavailable ({port}) after {relay_init_retries} attempt(s): {last_error}"
-                    )
-
-                print(f"WARNING: K1 serial relay unavailable ({port}); running with a mock relay. ({last_error})")
-                return False
 
             def _try_dsdtech(*, fatal_on_fail: bool = False) -> bool:
                 port = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
@@ -404,10 +358,20 @@ class HardwareManager:
                 boot_delay = float(getattr(config, "K1_DSDTECH_BOOT_DELAY_SEC", 0.2) or 0.0)
                 template = str(getattr(config, "K1_DSDTECH_CMD_TEMPLATE", "AT+CH{index}={state}") or "AT+CH{index}={state}")
                 suffix_raw = str(getattr(config, "K1_DSDTECH_CMD_SUFFIX", r"\r\n") or "")
-                try:
-                    suffix = bytes(suffix_raw, "utf-8").decode("unicode_escape")
-                except Exception:
-                    suffix = suffix_raw
+                suffix_norm = suffix_raw.strip().lower()
+                # systemd EnvironmentFile parsing commonly de-escapes "\r\n" into "rn".
+                # Accept both forms so relay commands always terminate correctly.
+                if suffix_norm == "rn":
+                    suffix = "\r\n"
+                elif suffix_norm == "r":
+                    suffix = "\r"
+                elif suffix_norm == "n":
+                    suffix = "\n"
+                else:
+                    try:
+                        suffix = bytes(suffix_raw, "utf-8").decode("unicode_escape")
+                    except Exception:
+                        suffix = suffix_raw
 
                 def _cmd_for(channel: int, drive_on: bool) -> bytes:
                     idx = base_idx + int(channel) - 1
@@ -461,39 +425,18 @@ class HardwareManager:
             elif backend == "mock":
                 self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                 self.relay_backend = "mock"
-            elif backend == "serial":
-                if not _try_serial(fatal_on_fail=True):
-                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
-                    self.relay_backend = "mock"
-            elif backend == "dsdtech":
-                if not _try_dsdtech(fatal_on_fail=True):
-                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
-                    self.relay_backend = "mock"
-            elif backend == "gpio":
-                # GPIO relay-hat support was removed. Treat this as a request for
-                # the standard K1 serial interface.
-                print("WARNING: K1_BACKEND='gpio' is no longer supported; using serial instead.")
-                if not _try_serial(fatal_on_fail=True):
-                    self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
-                    self.relay_backend = "mock"
             else:
-                # auto: choose a sensible default order and fall back to the
-                # other supported serial protocol.
-                order = _relay_auto_backend_order(self.relay_channel_count)
-                ok = False
-                for candidate in order:
-                    if candidate == "serial":
-                        ok = _try_serial(fatal_on_fail=False)
-                    elif candidate == "dsdtech":
-                        ok = _try_dsdtech(fatal_on_fail=False)
-                    if ok:
-                        break
-                if not ok:
-                    tried = ",".join(order)
-                    print(
-                        f"WARNING: K1 relay auto backend failed (tried {tried}); "
-                        "set K1_BACKEND/K1_SERIAL_PORT (or disable K1). Using mock relay."
-                    )
+                # DSDTECH is the only supported hardware backend now.
+                fatal_on_fail = True
+                if backend in ("", "auto"):
+                    print("WARNING: K1_BACKEND='auto' is deprecated; using dsdtech backend.")
+                    fatal_on_fail = False
+                elif backend in ("serial", "gpio"):
+                    print(f"WARNING: K1_BACKEND='{backend}' is deprecated; using dsdtech backend.")
+                elif backend != "dsdtech":
+                    print(f"WARNING: K1_BACKEND='{backend}' is unknown; using dsdtech backend.")
+                    fatal_on_fail = False
+                if not _try_dsdtech(fatal_on_fail=fatal_on_fail):
                     self.relay = _NullRelay(initial_drive, channels=self.relay_channel_count)
                     self.relay_backend = "mock"
 

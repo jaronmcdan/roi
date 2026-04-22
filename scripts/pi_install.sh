@@ -6,6 +6,8 @@ INSTALL_OS_DEPS="0"
 INSTALL_UDEV_RULES="0"
 ADD_USER_GROUPS="0"
 VENV_SYSTEM_SITE_PACKAGES="0"
+OFFLINE_PIP="0"
+WHEELHOUSE=""
 
 EASY="0"
 
@@ -19,11 +21,15 @@ Optional:
   --install-udev-rules         Install udev rules for USBTMC instruments (E-load)
   --add-user-groups            Add the invoking user to dialout/plugdev (for interactive runs)
   --venv-system-site-packages  Create the venv with --system-site-packages
+  --offline                    Install Python packages from a local wheelhouse (no PyPI access)
+  --wheelhouse <path>          Wheelhouse path (default: PREFIX/deploy/wheelhouse)
 
 Installs ROI onto a Raspberry Pi:
 - Copies this repo into PREFIX
 - Creates venv at PREFIX/.venv
-- Installs ROI into that venv (pip install PREFIX/)
+- Installs ROI into that venv
+  - online default: pip install PREFIX/
+  - offline mode: pip install --no-index --find-links <wheelhouse> PREFIX/
 - Writes /etc/roi/roi.env if missing (per-host config overrides)
 - Leaves systemd service install to scripts/service_install.sh
 EOF
@@ -43,6 +49,10 @@ while [[ $# -gt 0 ]]; do
       ADD_USER_GROUPS="1"; shift;;
     --venv-system-site-packages)
       VENV_SYSTEM_SITE_PACKAGES="1"; shift;;
+    --offline)
+      OFFLINE_PIP="1"; shift;;
+    --wheelhouse)
+      WHEELHOUSE="$2"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -146,10 +156,39 @@ else
   python3 -m venv "$PREFIX/.venv"
 fi
 
-"$PREFIX/.venv/bin/pip" install -U pip setuptools wheel
+if [[ -z "$WHEELHOUSE" ]]; then
+  WHEELHOUSE="$PREFIX/deploy/wheelhouse"
+elif [[ "$WHEELHOUSE" != /* ]]; then
+  WHEELHOUSE="$PREFIX/$WHEELHOUSE"
+fi
 
-# Install ROI (and dependencies) into the venv.
-"$PREFIX/.venv/bin/pip" install "$PREFIX"
+if [[ "$OFFLINE_PIP" == "1" ]]; then
+  echo "[ROI] Installing Python packages in offline mode"
+  echo "[ROI] Wheelhouse: $WHEELHOUSE"
+
+  if [[ ! -d "$WHEELHOUSE" ]]; then
+    echo "[ROI] ERROR: wheelhouse directory not found: $WHEELHOUSE" >&2
+    echo "[ROI] Build/copy an offline bundle first (see scripts/make_pi_dist.sh --offline)." >&2
+    exit 1
+  fi
+
+  shopt -s nullglob
+  WHEELHOUSE_PKGS=("$WHEELHOUSE"/*.whl "$WHEELHOUSE"/*.tar.gz "$WHEELHOUSE"/*.zip)
+  shopt -u nullglob
+  if [[ "${#WHEELHOUSE_PKGS[@]}" -eq 0 ]]; then
+    echo "[ROI] ERROR: wheelhouse is empty: $WHEELHOUSE" >&2
+    exit 1
+  fi
+
+  "$PREFIX/.venv/bin/pip" install --no-index --find-links "$WHEELHOUSE" -U pip setuptools wheel
+  # Install ROI (and dependencies) into the venv from local artifacts only.
+  "$PREFIX/.venv/bin/pip" install --no-index --find-links "$WHEELHOUSE" "$PREFIX"
+else
+  "$PREFIX/.venv/bin/pip" install -U pip setuptools wheel
+
+  # Install ROI (and dependencies) into the venv.
+  "$PREFIX/.venv/bin/pip" install "$PREFIX"
+fi
 
 # Env dir
 mkdir -p /etc/roi

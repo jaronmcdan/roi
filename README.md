@@ -47,6 +47,57 @@ sudo bash /opt/roi/scripts/service_install.sh --prefix /opt/roi --enable --start
 sudo journalctl -u roi -f
 ```
 
+## Offline Pi Deploy (build on PC, install on Pi)
+
+Build a tarball that includes a Python wheelhouse:
+
+```bash
+./scripts/make_pi_dist.sh --offline
+# produces dist/roi-<sha-or-timestamp>.tar.gz
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline
+```
+
+Build and upload directly to a Pi at `192.168.45.1` (prompts for SSH user/password):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline -Deploy
+```
+
+Build, upload, install on Pi, then reboot Pi:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline -Deploy -InstallOnPi -RebootAfterInstall
+```
+
+If your Pi is 32-bit (armv7), add:
+
+```powershell
+-PiPlatform manylinux2014_armv7l -PiPythonVersion 3.11
+```
+
+If you know the Pi Python version, you can lock it (for smaller wheelhouse):
+
+```powershell
+-PiPythonVersion 3.13
+```
+
+Copy to the Pi, extract, then install with offline pip mode:
+
+```bash
+sudo bash scripts/pi_install.sh --offline
+```
+
+Notes:
+
+- `--offline` installs Python packages from `deploy/wheelhouse` without PyPI access.
+- If the Pi is fully air-gapped, avoid `--easy` unless your apt sources are reachable
+  (or install OS packages another way first).
+
 ## Updating From GitHub
 
 ### Pi service install (`/opt/roi`)

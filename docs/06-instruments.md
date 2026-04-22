@@ -73,26 +73,16 @@ If using ASRL resources, tune auto-detect probing with:
 ## K Relays (USB serial controller, K1..K4)
 
 ```bash
-# Auto backend:
-# - K1_CHANNEL_COUNT=1 -> serial first, then dsdtech fallback
-# - K1_CHANNEL_COUNT>1 -> dsdtech first, then serial fallback
-K1_BACKEND=auto
+K1_BACKEND=dsdtech
 K1_SERIAL_PORT=/dev/serial/by-id/<your-relay>
 K1_CHANNEL_COUNT=1
-
-# Force legacy single-channel protocol (ON='1', OFF='a', etc.)
-K1_BACKEND=serial
-K1_SERIAL_PORT=/dev/serial/by-id/<your-relay>
-K1_CHANNEL_COUNT=1
-K1_SERIAL_BAUD=9600
-K1_SERIAL_RELAY_INDEX=1
-
-# Force DSD Tech SH-URxx AT protocol
-# K1_BACKEND=dsdtech
 # K1_CHANNEL_COUNT=4
 # K1_DSDTECH_CMD_TEMPLATE=AT+CH{index}={state}
 # K1_DSDTECH_CMD_SUFFIX=\r\n
 ```
+
+Legacy `K1_BACKEND=auto|serial|gpio` values are accepted for compatibility and
+treated as `dsdtech`.
 
 Relay CAN control remains on `CTRL_RLY` ID `0x0CFF0500`:
 

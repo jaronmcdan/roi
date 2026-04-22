@@ -192,7 +192,7 @@ AUTO_DETECT_ELOAD_IDN_HINTS = _env_str(
 # These are matched against the /dev/serial/by-id symlink names.
 AUTO_DETECT_MMETER_BYID_HINTS = _env_str("AUTO_DETECT_MMETER_BYID_HINTS", AUTO_DETECT_MMETER_IDN_HINTS)
 AUTO_DETECT_MRSIGNAL_BYID_HINTS = _env_str("AUTO_DETECT_MRSIGNAL_BYID_HINTS", "mr.signal,lanyi,mr2,mrsignal")
-AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "dsd,dsdtech,arduino,relay,cp2102")
+AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "dsd,dsdtech,relay,cp2102")
 # Additional by-id name hints that should *not* be considered for K1 relay
 # auto-detection (helps avoid accidental collisions with other serial devices).
 AUTO_DETECT_K1_BYID_EXCLUDE_HINTS = _env_str(
@@ -254,31 +254,22 @@ K1_ENABLE = _env_bool("K1_ENABLE", True)
 # K1 backend selection.
 #
 # Values:
-#   - "auto" (default): For K1_CHANNEL_COUNT=1, try "serial" then "dsdtech".
-#                       For K1_CHANNEL_COUNT>1, try "dsdtech" then "serial".
-#   - "serial":  Force USB-serial relay backend (e.g. Arduino + relay board).
-#   - "dsdtech": Force DSD Tech AT-command serial backend.
+#   - "dsdtech" (default): Use DSD Tech AT-command serial backend.
 #   - "mock":    Always use a mock relay (no hardware).
 #   - "disabled": Disable K1 entirely (same as K1_ENABLE=0).
-K1_BACKEND = _env_str("K1_BACKEND", "auto").strip().lower()
+# Legacy aliases kept for compatibility and treated as "dsdtech":
+#   "auto", "serial", "gpio"
+K1_BACKEND = _env_str("K1_BACKEND", "dsdtech").strip().lower()
 
 # Number of logical relay channels controlled from CTRL_RLY.
 # 1 keeps legacy behavior (single-channel relay mapped to K1).
 K1_CHANNEL_COUNT = _env_int("K1_CHANNEL_COUNT", 1)
 
-# USB-serial relay backend (Arduino relay controller).
-# Use a stable by-id path when possible, e.g.:
-#   /dev/serial/by-id/usb-Arduino*  (Linux)
+# Relay serial port (DSD Tech USB relay controller).
+# Use a stable by-id path when possible.
 K1_SERIAL_PORT = _env_str("K1_SERIAL_PORT", "")
+# Legacy alias for baud rate; K1_DSDTECH_BAUD should be preferred.
 K1_SERIAL_BAUD = _env_int("K1_SERIAL_BAUD", 9600)
-K1_SERIAL_RELAY_INDEX = _env_int("K1_SERIAL_RELAY_INDEX", 1)
-K1_SERIAL_BOOT_DELAY_SEC = _env_float("K1_SERIAL_BOOT_DELAY_SEC", 2.0)
-
-# Optional explicit command bytes for the serial backend.
-# If left empty, ROI will generate them from K1_SERIAL_RELAY_INDEX using the
-# default protocol: ON = '1'..'4', OFF = 'a'..'d'.
-K1_SERIAL_ON_CHAR = _env_str("K1_SERIAL_ON_CHAR", "")
-K1_SERIAL_OFF_CHAR = _env_str("K1_SERIAL_OFF_CHAR", "")
 
 # DSD Tech SH-URxx serial backend (AT-command style).
 K1_DSDTECH_BAUD = _env_int("K1_DSDTECH_BAUD", K1_SERIAL_BAUD)

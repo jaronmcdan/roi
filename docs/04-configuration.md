@@ -81,7 +81,7 @@ AUTO_DETECT_PCAN_PREFER_CHANNEL=can0
 
 AUTO_DETECT_MMETER_BYID_HINTS=5491b,multimeter
 AUTO_DETECT_MRSIGNAL_BYID_HINTS=mr.signal,lanyi
-AUTO_DETECT_K1_BYID_HINTS=dsd,dsdtech,arduino,relay,cp2102
+AUTO_DETECT_K1_BYID_HINTS=dsd,dsdtech,relay,cp2102
 AUTO_DETECT_K1_BYID_EXCLUDE_HINTS=mr.signal,lanyi,mrsignal,multimeter,5491,canview,proemion,afg
 AUTO_DETECT_CANVIEW_BYID_HINTS=canview,proemion
 ```
@@ -104,17 +104,13 @@ MULTI_METER_PATH=/dev/ttyUSB0
 MRSIGNAL_PORT=/dev/ttyUSB1
 K1_SERIAL_PORT=/dev/ttyACM0
 K1_CHANNEL_COUNT=1
-# K1_BACKEND=auto
-# K1_BACKEND=serial
-# K1_BACKEND=dsdtech
+K1_BACKEND=dsdtech
 ELOAD_VISA_ID=USB0::...
 AFG_VISA_ID=USB0::...
 ```
 
-Relay backend `auto` behavior:
-
-- `K1_CHANNEL_COUNT=1`: tries `serial`, then `dsdtech`
-- `K1_CHANNEL_COUNT>1`: tries `dsdtech`, then `serial`
+Legacy `K1_BACKEND=auto|serial|gpio` values are accepted for compatibility and
+treated as `dsdtech`.
 
 Relay CAN control ID stays fixed at `0x0CFF0500` (`CTRL_RLY` in `PAT.dbc`).
 

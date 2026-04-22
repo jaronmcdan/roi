@@ -65,3 +65,52 @@ Copy the tarball to the Pi, extract it, then run:
 ```bash
 sudo bash scripts/pi_install.sh --easy
 ```
+
+## Offline distributable (packages pre-downloaded on PC)
+
+Build a tarball that bundles Python wheels/sdists:
+
+```bash
+./scripts/make_pi_dist.sh --offline
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline
+```
+
+Windows PowerShell (build + upload to `192.168.45.1`, prompts for SSH user/password):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline -Deploy
+```
+
+Windows PowerShell (build + upload + install on Pi + reboot):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline -Deploy -InstallOnPi -RebootAfterInstall
+```
+
+For 32-bit Pi OS (armv7), add:
+
+```powershell
+-PiPlatform manylinux2014_armv7l -PiPythonVersion 3.11
+```
+
+If you know the Pi Python version, you can lock it:
+
+```powershell
+-PiPythonVersion 3.13
+```
+
+On the Pi, extract the tarball and run:
+
+```bash
+sudo bash scripts/pi_install.sh --offline
+```
+
+Notes:
+
+- `--offline` tells `pi_install.sh` to install via `--no-index --find-links deploy/wheelhouse`.
+- For a fully air-gapped Pi, skip `--easy` unless apt repos are also locally available.

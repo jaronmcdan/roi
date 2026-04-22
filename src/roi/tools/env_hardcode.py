@@ -215,13 +215,9 @@ def render_env(
     lines.append("")
 
     lines.append("# K1 relay")
-    k1_backend_cfg = str(getattr(config, "K1_BACKEND", "serial") or "serial").strip().lower()
-    if k1_backend_cfg not in ("serial", "dsdtech"):
-        k1_backend_cfg = "serial"
-
     if detected.k1_serial_port:
         lines.append("K1_ENABLE=1")
-        lines.append(f"K1_BACKEND={k1_backend_cfg}")
+        lines.append("K1_BACKEND=dsdtech")
         lines.append(f"K1_SERIAL_PORT={detected.k1_serial_port}")
     else:
         lines.append(f"K1_ENABLE={_bool_int(not disable_missing)}")
@@ -229,7 +225,6 @@ def render_env(
         lines.append(f"K1_SERIAL_PORT={str(getattr(config, 'K1_SERIAL_PORT', '') or '')}")
     lines.append(f"K1_CHANNEL_COUNT={int(getattr(config, 'K1_CHANNEL_COUNT', 1))}")
     lines.append(f"K1_SERIAL_BAUD={int(getattr(config, 'K1_SERIAL_BAUD', 9600))}")
-    lines.append(f"K1_SERIAL_RELAY_INDEX={int(getattr(config, 'K1_SERIAL_RELAY_INDEX', 1))}")
     lines.append(f"K1_DSDTECH_BAUD={int(getattr(config, 'K1_DSDTECH_BAUD', 9600))}")
     lines.append(f"K1_DSDTECH_BOOT_DELAY_SEC={float(getattr(config, 'K1_DSDTECH_BOOT_DELAY_SEC', 0.2))}")
     lines.append(f"K1_DSDTECH_CHANNEL={int(getattr(config, 'K1_DSDTECH_CHANNEL', 1))}")

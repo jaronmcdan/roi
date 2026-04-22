@@ -1,0 +1,3 @@
+scripts/*.sh text eol=lf
+deploy/systemd/*.service text eol=lf
+deploy/env/*.example text eol=lf
