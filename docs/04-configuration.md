@@ -74,9 +74,15 @@ AUTO_DETECT_VERBOSE=1
 AUTO_DETECT_PREFER_BY_ID=1
 AUTO_DETECT_BYID_ONLY=1
 
+# Prefer PCAN (SocketCAN netdev) when both PCAN and CANview are present
+AUTO_DETECT_PCAN=1
+AUTO_DETECT_PCAN_USB_IDS=0c72:000c
+AUTO_DETECT_PCAN_PREFER_CHANNEL=can0
+
 AUTO_DETECT_MMETER_BYID_HINTS=5491b,multimeter
 AUTO_DETECT_MRSIGNAL_BYID_HINTS=mr.signal,lanyi
-AUTO_DETECT_K1_BYID_HINTS=dsd,dsdtech,arduino,relay
+AUTO_DETECT_K1_BYID_HINTS=dsd,dsdtech,arduino,relay,cp2102
+AUTO_DETECT_K1_BYID_EXCLUDE_HINTS=mr.signal,lanyi,mrsignal,multimeter,5491,canview,proemion,afg
 AUTO_DETECT_CANVIEW_BYID_HINTS=canview,proemion
 ```
 

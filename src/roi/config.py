@@ -169,6 +169,12 @@ AUTO_DETECT_MMETER = _env_bool("AUTO_DETECT_MMETER", True)
 AUTO_DETECT_MRSIGNAL = _env_bool("AUTO_DETECT_MRSIGNAL", True)
 AUTO_DETECT_K1_SERIAL = _env_bool("AUTO_DETECT_K1_SERIAL", True)
 AUTO_DETECT_CANVIEW = _env_bool("AUTO_DETECT_CANVIEW", True)
+# Prefer SocketCAN (PCAN-style netdev) over CANview when both are attached.
+AUTO_DETECT_PCAN = _env_bool("AUTO_DETECT_PCAN", True)
+# Comma-separated USB VID:PID list used to detect PCAN hardware presence.
+AUTO_DETECT_PCAN_USB_IDS = _env_str("AUTO_DETECT_PCAN_USB_IDS", "0c72:000c")
+# Preferred SocketCAN channel when PCAN is detected.
+AUTO_DETECT_PCAN_PREFER_CHANNEL = _env_str("AUTO_DETECT_PCAN_PREFER_CHANNEL", "can0")
 
 AUTO_DETECT_VISA = _env_bool("AUTO_DETECT_VISA", True)
 AUTO_DETECT_AFG = _env_bool("AUTO_DETECT_AFG", True)
@@ -186,7 +192,13 @@ AUTO_DETECT_ELOAD_IDN_HINTS = _env_str(
 # These are matched against the /dev/serial/by-id symlink names.
 AUTO_DETECT_MMETER_BYID_HINTS = _env_str("AUTO_DETECT_MMETER_BYID_HINTS", AUTO_DETECT_MMETER_IDN_HINTS)
 AUTO_DETECT_MRSIGNAL_BYID_HINTS = _env_str("AUTO_DETECT_MRSIGNAL_BYID_HINTS", "mr.signal,lanyi,mr2,mrsignal")
-AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "dsd,dsdtech,arduino,micro,relay")
+AUTO_DETECT_K1_BYID_HINTS = _env_str("AUTO_DETECT_K1_BYID_HINTS", "dsd,dsdtech,arduino,relay,cp2102")
+# Additional by-id name hints that should *not* be considered for K1 relay
+# auto-detection (helps avoid accidental collisions with other serial devices).
+AUTO_DETECT_K1_BYID_EXCLUDE_HINTS = _env_str(
+    "AUTO_DETECT_K1_BYID_EXCLUDE_HINTS",
+    "mr.signal,lanyi,mrsignal,multimeter,5491,canview,rm_canview,proemion,afg",
+)
 AUTO_DETECT_CANVIEW_BYID_HINTS = _env_str("AUTO_DETECT_CANVIEW_BYID_HINTS", "canview,rm_canview,proemion")
 AUTO_DETECT_AFG_BYID_HINTS = _env_str("AUTO_DETECT_AFG_BYID_HINTS", "afg")
 

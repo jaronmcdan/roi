@@ -55,6 +55,84 @@ def _serial_by_id_entries() -> List[Tuple[str, str, str]]:
     return out
 
 
+def _linux_can_netdevs() -> List[str]:
+    """Return detected SocketCAN-like netdev names (can0, can1, ...)."""
+
+    base = "/sys/class/net"
+    if not os.path.isdir(base):
+        return []
+    out: List[str] = []
+    try:
+        for name in sorted(os.listdir(base)):
+            nl = str(name or "").strip().lower()
+            if nl.startswith("can"):
+                out.append(str(name))
+    except Exception:
+        return []
+    return out
+
+
+def _parse_usb_vid_pid_tokens(raw: str) -> List[Tuple[str, str]]:
+    """Parse comma-separated USB VID:PID entries into lowercase tuples."""
+
+    out: List[Tuple[str, str]] = []
+    for tok in (raw or "").split(","):
+        t = tok.strip().lower()
+        if not t or ":" not in t:
+            continue
+        vid, pid = t.split(":", 1)
+        vid = vid.strip()
+        pid = pid.strip()
+        if len(vid) != 4 or len(pid) != 4:
+            continue
+        out.append((vid, pid))
+    return out
+
+
+def _usb_has_vid_pid(vid: str, pid: str) -> bool:
+    """Return True when a USB device with matching VID/PID is present."""
+
+    base = "/sys/bus/usb/devices"
+    if not os.path.isdir(base):
+        return False
+
+    vid_l = str(vid or "").strip().lower()
+    pid_l = str(pid or "").strip().lower()
+    if not vid_l or not pid_l:
+        return False
+
+    try:
+        for dev in os.listdir(base):
+            d = os.path.join(base, dev)
+            v_path = os.path.join(d, "idVendor")
+            p_path = os.path.join(d, "idProduct")
+            if not (os.path.isfile(v_path) and os.path.isfile(p_path)):
+                continue
+            try:
+                with open(v_path, "r", encoding="ascii", errors="ignore") as vf:
+                    v = vf.read().strip().lower()
+                with open(p_path, "r", encoding="ascii", errors="ignore") as pf:
+                    p = pf.read().strip().lower()
+            except Exception:
+                continue
+            if v == vid_l and p == pid_l:
+                return True
+    except Exception:
+        return False
+
+    return False
+
+
+def _pcan_usb_present() -> bool:
+    """Best-effort USB presence check for PCAN hardware."""
+
+    raw = str(getattr(config, "AUTO_DETECT_PCAN_USB_IDS", "0c72:000c") or "0c72:000c")
+    for vid, pid in _parse_usb_vid_pid_tokens(raw):
+        if _usb_has_vid_pid(vid, pid):
+            return True
+    return False
+
+
 def _match_hint(name_l: str, hint_l: str) -> bool:
     """Return True if the hint matches the by-id name.
 
@@ -74,21 +152,41 @@ def _match_hint(name_l: str, hint_l: str) -> bool:
     return hint_l in name_l
 
 
-def _pick_by_id(entries: Sequence[Tuple[str, str, str]], hints: Sequence[str]) -> Optional[str]:
+def _realpath_or_self(p: str) -> str:
+    try:
+        return os.path.realpath(p)
+    except Exception:
+        return p
+
+
+def _pick_by_id(
+    entries: Sequence[Tuple[str, str, str]],
+    hints: Sequence[str],
+    *,
+    exclude_realpaths: Optional[Sequence[str]] = None,
+    exclude_name_hints: Optional[Sequence[str]] = None,
+) -> Optional[str]:
     """Pick the best /dev/serial/by-id path matching the hints.
 
     Returns the by-id *symlink path* (not the real /dev/tty* node).
     """
 
     hs = [h.strip().lower() for h in (hints or []) if (h or "").strip()]
+    ex_hints = [h.strip().lower() for h in (exclude_name_hints or []) if (h or "").strip()]
+    ex_real = {_realpath_or_self(str(p)) for p in (exclude_realpaths or []) if str(p).strip()}
     if not entries or not hs:
         return None
 
     best_path: Optional[str] = None
     best_score = 0
 
-    for name, path, _real in entries:
+    for name, path, real in entries:
         nl = (name or "").lower()
+        if ex_hints and any(_match_hint(nl, h) for h in ex_hints):
+            continue
+        real_key = _realpath_or_self(real or path)
+        if ex_real and real_key in ex_real:
+            continue
         score = 0
         for h in hs:
             if _match_hint(nl, h):
@@ -356,27 +454,44 @@ def autodetect_and_patch_config(*, log_fn: Optional[LogFn] = None) -> DiscoveryR
     )
     mrs_enabled = bool(getattr(config, "MRSIGNAL_ENABLE", False))
     mrs_byid_hints = _split_hints(str(getattr(config, "AUTO_DETECT_MRSIGNAL_BYID_HINTS", "") or ""))
+    k1_hints = _split_hints(str(getattr(config, "AUTO_DETECT_K1_BYID_HINTS", "") or ""))
+    k1_exclude_hints = _split_hints(str(getattr(config, "AUTO_DETECT_K1_BYID_EXCLUDE_HINTS", "") or ""))
+    can_hints = _split_hints(str(getattr(config, "AUTO_DETECT_CANVIEW_BYID_HINTS", "") or ""))
     afg_hints = _split_hints(str(getattr(config, "AUTO_DETECT_AFG_IDN_HINTS", "") or ""))
     afg_byid_hints = _split_hints(str(getattr(config, "AUTO_DETECT_AFG_BYID_HINTS", "") or ""))
     eload_hints = _split_hints(str(getattr(config, "AUTO_DETECT_ELOAD_IDN_HINTS", "") or ""))
 
-    # ---- Closed-system helpers: map by-id names to config *without* probing ----
-    # CAN backend auto-select:
-    #   - Prefer an RM/Proemion CANview gateway (rmcanview) when present
-    #   - Otherwise fall back to SocketCAN
+    # ---- Closed-system helpers: map startup CAN backend ----
+    # Startup priority:
+    #   1) PCAN (SocketCAN netdev) when PCAN USB is detected and a can* netdev exists
+    #   2) RM/Proemion CANview (serial gateway) when present
+    #   3) fallback SocketCAN
     #
     # This is intentionally best-effort. If you need to force a backend, disable
-    # AUTO_DETECT_CANVIEW (or AUTO_DETECT_ENABLE) and set CAN_INTERFACE/CAN_CHANNEL.
-    if bool(getattr(config, "AUTO_DETECT_CANVIEW", True)):
+    # auto-detect and set CAN_INTERFACE/CAN_CHANNEL explicitly.
+    if bool(getattr(config, "AUTO_DETECT_CANVIEW", True)) or bool(getattr(config, "AUTO_DETECT_PCAN", True)):
+        auto_canview = bool(getattr(config, "AUTO_DETECT_CANVIEW", True))
+        auto_pcan = bool(getattr(config, "AUTO_DETECT_PCAN", True))
         iface = str(getattr(config, "CAN_INTERFACE", "socketcan") or "socketcan").strip().lower()
 
-        # Remember the current SocketCAN channel as the fallback *before* we
-        # potentially overwrite CAN_CHANNEL with a /dev/... serial path.
+        # Determine the best SocketCAN fallback channel.
         cur_chan = str(getattr(config, "CAN_CHANNEL", "") or "").strip()
-        socket_fallback = cur_chan if (cur_chan and (not cur_chan.startswith("/dev/"))) else "can0"
+        can_netdevs = _linux_can_netdevs()
+        prefer_sock = str(getattr(config, "AUTO_DETECT_PCAN_PREFER_CHANNEL", "can0") or "can0").strip()
+        if cur_chan and (not cur_chan.startswith("/dev/")) and (cur_chan in can_netdevs):
+            socket_fallback = cur_chan
+        elif prefer_sock and (prefer_sock in can_netdevs):
+            socket_fallback = prefer_sock
+        elif can_netdevs:
+            socket_fallback = can_netdevs[0]
+        elif cur_chan and (not cur_chan.startswith("/dev/")):
+            socket_fallback = cur_chan
+        else:
+            socket_fallback = prefer_sock or "can0"
 
-        can_hints = _split_hints(str(getattr(config, "AUTO_DETECT_CANVIEW_BYID_HINTS", "") or ""))
-        cand = _pick_by_id(byid_entries, can_hints) if (byid_entries and can_hints) else None
+        cand = _pick_by_id(byid_entries, can_hints) if (auto_canview and byid_entries and can_hints) else None
+        pcan_present = bool(auto_pcan and _pcan_usb_present())
+        pcan_ready = bool(can_netdevs)
 
         # Only auto-switch for the two supported backends. If the user selected a
         # different python-can interface, don't override it.
@@ -390,7 +505,15 @@ def autodetect_and_patch_config(*, log_fn: Optional[LogFn] = None) -> DiscoveryR
             "proemion",
         )
 
-        if cand and auto_ok:
+        if pcan_present and pcan_ready and auto_ok:
+            # PCAN precedence: use SocketCAN when both PCAN and CANview are present.
+            setattr(config, "CAN_INTERFACE", "socketcan")
+            setattr(config, "CAN_CHANNEL", socket_fallback)
+            res.can_channel = socket_fallback
+            if verbose:
+                _log(log_fn, f"[autodetect] CAN backend: socketcan ({socket_fallback}) [pcan precedence]")
+
+        elif cand and auto_ok:
             # CANview present: switch to rmcanview + pin channel to stable by-id path
             setattr(config, "CAN_INTERFACE", "rmcanview")
             setattr(config, "CAN_CHANNEL", cand)
@@ -405,6 +528,8 @@ def autodetect_and_patch_config(*, log_fn: Optional[LogFn] = None) -> DiscoveryR
                 setattr(config, "CAN_CHANNEL", socket_fallback)
                 if verbose:
                     _log(log_fn, f"[autodetect] CAN backend: socketcan ({socket_fallback})")
+            elif pcan_present and (not pcan_ready) and verbose:
+                _log(log_fn, "[autodetect] pcan usb detected but no can* netdev found; keeping existing CAN selection")
 
             # If socketcan is selected but CAN_CHANNEL is a /dev/... path (misconfig),
             # fall back to the remembered netdev name.
@@ -446,8 +571,31 @@ def autodetect_and_patch_config(*, log_fn: Optional[LogFn] = None) -> DiscoveryR
                     _log(log_fn, f"[autodetect] k1 serial: {stable} (from {cur})")
         cur2 = str(getattr(config, "K1_SERIAL_PORT", "") or "").strip()
         if not cur2:
-            k1_hints = _split_hints(str(getattr(config, "AUTO_DETECT_K1_BYID_HINTS", "") or ""))
-            cand = _pick_by_id(byid_entries, k1_hints)
+            k1_reserved_realpaths = set()
+
+            # Never auto-assign K1 to ports already used (or strongly indicated)
+            # for other roles.
+            for p in (
+                str(getattr(config, "CAN_CHANNEL", "") or "").strip(),
+                str(getattr(config, "MULTI_METER_PATH", "") or "").strip(),
+                str(getattr(config, "MRSIGNAL_PORT", "") or "").strip(),
+                _pick_by_id(byid_entries, can_hints) if can_hints else None,
+                _pick_by_id(byid_entries, mm_byid_hints) if mm_byid_hints else None,
+                _pick_by_id(byid_entries, mrs_byid_hints) if (mrs_enabled and mrs_byid_hints) else None,
+                _pick_by_id(byid_entries, afg_byid_hints) if afg_byid_hints else None,
+            ):
+                if not p:
+                    continue
+                if isinstance(p, str) and (not p.startswith("/dev/")):
+                    continue
+                k1_reserved_realpaths.add(_realpath_or_self(str(p)))
+
+            cand = _pick_by_id(
+                byid_entries,
+                k1_hints,
+                exclude_realpaths=tuple(k1_reserved_realpaths),
+                exclude_name_hints=k1_exclude_hints,
+            )
             if cand:
                 setattr(config, "K1_SERIAL_PORT", cand)
                 res.k1_serial_port = cand
