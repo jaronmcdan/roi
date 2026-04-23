@@ -49,6 +49,10 @@ sudo journalctl -u roi -f
 
 ## Offline Pi Deploy (build on PC, install on Pi)
 
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\make_pi_dist.ps1 -Offline -Deploy -InstallOnPi -RebootAfterInstall -DeployHost 192.168.45.1 -DeployUser pete
+```
+
 Build a tarball that includes a Python wheelhouse:
 
 ```bash
